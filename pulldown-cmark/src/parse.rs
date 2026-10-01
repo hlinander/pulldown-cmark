@@ -60,6 +60,8 @@ pub(crate) enum ItemBody {
     MaybeEmphasis(usize, bool, bool),
     // can_open, can_close, brace context
     MaybeMath(bool, bool, u8),
+    // MathJax delimiter: (, ), [, ], or a pair of dollars.
+    MaybeMathJax(u8),
     // quote byte, can_open, can_close
     MaybeSmartQuote(u8, bool, bool),
     MaybeCode(usize, bool), // number of backticks, preceded by backslash
@@ -135,6 +137,7 @@ impl ItemBody {
             *self,
             MaybeEmphasis(..)
                 | MaybeMath(..)
+                | MaybeMathJax(..)
                 | MaybeSmartQuote(..)
                 | MaybeCode(..)
                 | MaybeHtml
@@ -149,6 +152,7 @@ impl ItemBody {
             *self,
             MaybeEmphasis(..)
                 | MaybeMath(..)
+                | MaybeMathJax(..)
                 | MaybeSmartQuote(..)
                 | MaybeCode(..)
                 | MaybeHtml
@@ -385,6 +389,9 @@ impl<'input, F: BrokenLinkCallback<'input>> Parser<'input, F> {
     /// the same precedence. It also handles links, even though they have lower
     /// precedence, because the URL of links must not be processed.
     fn handle_inline_pass1(&mut self) {
+        // A failed scan exhausts this inline chain for that delimiter kind.
+        // Repeated unmatched openers therefore take linear time.
+        let mut mathjax_exhausted = [false; 3];
         let mut cur = self.tree.cur();
         let mut prev = None;
 
@@ -455,6 +462,38 @@ impl<'input, F: BrokenLinkCallback<'input>> Parser<'input, F> {
                     self.tree[cur_ix].item.body = ItemBody::Text {
                         backslash_escaped: false,
                     };
+                }
+                ItemBody::MaybeMathJax(delimiter) => {
+                    let closing = match delimiter {
+                        b'(' => Some((b')', 0)),
+                        b'[' => Some((b']', 1)),
+                        b'$' => Some((b'$', 2)),
+                        _ => None,
+                    };
+                    let mut matched = None;
+                    if let Some((closing, kind)) = closing {
+                        if !mathjax_exhausted[kind] {
+                            let mut scan = self.tree[cur_ix].next;
+                            while let Some(scan_ix) = scan {
+                                if self.tree[scan_ix].item.body == ItemBody::MaybeMathJax(closing) {
+                                    matched = Some(scan_ix);
+                                    break;
+                                }
+                                scan = self.tree[scan_ix].next;
+                            }
+                            mathjax_exhausted[kind] = matched.is_none();
+                        }
+                    }
+                    if let Some(close) = matched {
+                        self.make_math_span_content(cur_ix, close, delimiter != b'(');
+                    } else {
+                        // Restore ordinary CommonMark escaping for unmatched \ delimiters.
+                        let escaped = delimiter != b'$';
+                        self.tree[cur_ix].item.start += usize::from(escaped);
+                        self.tree[cur_ix].item.body = ItemBody::Text {
+                            backslash_escaped: escaped,
+                        };
+                    }
                 }
                 ItemBody::MaybeMath(can_open, _can_close, brace_context) => {
                     if !can_open {
@@ -1280,6 +1319,10 @@ impl<'input, F: BrokenLinkCallback<'input>> Parser<'input, F> {
             }
             self.tree[open].next = Some(close);
         }
+        self.make_math_span_content(open, close, is_display);
+    }
+
+    fn make_math_span_content(&mut self, open: TreeIndex, close: TreeIndex, is_display: bool) {
         let span_start = self.tree[open].item.end;
         let span_end = self.tree[close].item.start;
 

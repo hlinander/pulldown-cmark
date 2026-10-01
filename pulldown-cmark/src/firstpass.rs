@@ -877,7 +877,18 @@ impl<'a, 'b> FirstPass<'a, 'b> {
                 b'\\' => {
                     if ix + 1 < bytes_len && is_ascii_punctuation(bytes[ix + 1]) {
                         self.tree.append_text(begin_text, ix, backslash_escaped);
-                        if bytes[ix + 1] == b'`' {
+                        if self.options.contains(Options::ENABLE_MATHJAX_MATH)
+                            && matches!(bytes[ix + 1], b'(' | b')' | b'[' | b']')
+                        {
+                            self.tree.append(Item {
+                                start: ix,
+                                end: ix + 2,
+                                body: ItemBody::MaybeMathJax(bytes[ix + 1]),
+                            });
+                            begin_text = ix + 2;
+                            backslash_escaped = false;
+                            LoopInstruction::ContinueAndSkip(1)
+                        } else if bytes[ix + 1] == b'`' {
                             let count = 1 + scan_ch_repeat(&bytes[(ix + 2)..], b'`');
                             self.tree.append(Item {
                                 start: ix + 1,
@@ -947,6 +958,21 @@ impl<'a, 'b> FirstPass<'a, 'b> {
                         begin_text = ix + count;
                     }
                     LoopInstruction::ContinueAndSkip(count - 1)
+                }
+                b'$' if self.options.contains(Options::ENABLE_MATHJAX_MATH) => {
+                    if bytes.get(ix + 1) == Some(&b'$') {
+                        self.tree.append_text(begin_text, ix, backslash_escaped);
+                        self.tree.append(Item {
+                            start: ix,
+                            end: ix + 2,
+                            body: ItemBody::MaybeMathJax(b'$'),
+                        });
+                        begin_text = ix + 2;
+                        backslash_escaped = false;
+                        LoopInstruction::ContinueAndSkip(1)
+                    } else {
+                        LoopInstruction::ContinueAndSkip(0)
+                    }
                 }
                 b'$' => {
                     let byte_suffix = &bytes[ix..];

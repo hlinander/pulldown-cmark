@@ -716,6 +716,10 @@ bitflags::bitflags! {
         /// With this feature enabled, two events `Event::InlineMath` and `Event::DisplayMath`
         /// are emitted that conventionally contain TeX formulas.
         const ENABLE_MATH = 1 << 10;
+        /// Use MathJax's default TeX delimiters: `\(...\)` for inline math,
+        /// and `\[...\]` or `$$...$$` for display math. Single dollar signs
+        /// remain literal. Implies `ENABLE_MATH` and overrides its delimiters.
+        const ENABLE_MATHJAX_MATH = (1 << 16) | Self::ENABLE_MATH.bits();
         /// Misc GitHub Flavored Markdown features not supported in CommonMark.
         /// The following features are currently behind this tag:
         /// - Blockquote tags ([!NOTE], [!TIP], [!IMPORTANT], [!WARNING], [!CAUTION]).
